@@ -54,6 +54,25 @@ Push-to-talk, not toggle: **hold** `⌃ + Space` to record, **release** it to st
 
 Holding the key exactly as long as you're speaking (rather than tap-to-start / tap-to-stop) is deliberate — a toggle makes it easy to tap the hotkey a second time out of habit and clip your own sentence.
 
+### Context-aware formatting
+
+LocalFlow notes which app had focus when you started dictating and adapts the text to it, so the same spoken words come out formatted for where they're going:
+
+| App in focus | What you get |
+|---|---|
+| Claude, ChatGPT, other AI assistants | A clear, specific, well-structured prompt |
+| Gmail, Outlook, Mail, Spark… | A formatted email — subject, greeting, body, closing where warranted |
+| Terminal, VS Code, Xcode, JetBrains… | A technical request or command with correct syntax and casing |
+| Slack, Teams, Discord, Messages… | A natural, concise chat message |
+| Notion, Word, Obsidian, Notes… | Prose with improved grammar, structure, and formatting |
+| Anything else | Clean, well-punctuated prose with no format imposed |
+
+For browsers — where the app itself tells you nothing — LocalFlow reads the focused window title (e.g. `Inbox (12) – you@gmail.com – Gmail`) to figure out the surface. That uses the Accessibility permission the app already requires; if the title isn't readable, it falls back to generic cleanup.
+
+The formatting never invents content: if the app's context and what you actually said disagree, your words win, and ambiguous dictation gets the smallest reasonable correction rather than made-up detail.
+
+Classification lives in the backend (`backend/appcontext.go`), so you can add apps or retune prompts by editing that file and restarting the backend — no client rebuild, and therefore no re-granting Accessibility.
+
 > `⌃ + Space` is also macOS's default "Select the previous input source" shortcut. LocalFlow's hotkey normally takes priority, but if input-source switching stops working after installing it, disable that shortcut in System Settings → Keyboard → Keyboard Shortcuts → Input Sources.
 
 ## On the Swift project

@@ -37,6 +37,11 @@ final class AppState: ObservableObject {
     private let backendClient = BackendClient()
     private var hotkeyManager: HotkeyManager?
 
+    /// The app that had focus when the current recording started. Captured
+    /// at press time rather than on completion, because by the time the
+    /// transcript comes back the user may well have switched away.
+    private var focusAtRecordingStart: FocusContext?
+
     private init() {}
 
     /// Called once at launch: pre-warms the recorder, registers the global
@@ -92,6 +97,8 @@ final class AppState: ObservableObject {
             return
         }
 
+        focusAtRecordingStart = FocusContext.current()
+
         do {
             try audioRecorder.startRecording()
             phase = .recording
@@ -105,12 +112,14 @@ final class AppState: ObservableObject {
             phase = .idle
             return
         }
+        let focus = focusAtRecordingStart
+        focusAtRecordingStart = nil
         phase = .processing
 
         Task {
             defer { try? FileManager.default.removeItem(at: fileURL) }
             do {
-                let text = try await backendClient.dictate(audioFileURL: fileURL)
+                let text = try await backendClient.dictate(audioFileURL: fileURL, focus: focus)
                 if !text.isEmpty {
                     TextInjector.paste(text)
                 }

@@ -28,9 +28,12 @@ enum BackendError: Error, LocalizedError {
 final class BackendClient {
     static let apiV1Base = "http://127.0.0.1:8080/api/v1"
 
-    /// Multipart field name the audio file is uploaded under. Must match
-    /// `audioFormField` in the backend's handlers.go.
+    /// Multipart field names. These must match the corresponding
+    /// constants in the backend's handlers.go.
     private static let audioFormField = "audio"
+    private static let bundleIDField = "app_bundle_id"
+    private static let appNameField = "app_name"
+    private static let windowTitleField = "window_title"
 
     private let session: URLSession
 
@@ -40,7 +43,11 @@ final class BackendClient {
 
     /// Uploads the recording at `audioFileURL` to `POST /api/v1/dictate`
     /// and returns the cleaned transcript.
-    func dictate(audioFileURL: URL) async throws -> String {
+    ///
+    /// `focus` describes the app that had keyboard focus when recording
+    /// started; the backend uses it to choose a context-appropriate
+    /// cleanup prompt. Passing nil just falls back to generic cleanup.
+    func dictate(audioFileURL: URL, focus: FocusContext?) async throws -> String {
         guard let url = URL(string: "\(BackendClient.apiV1Base)/dictate") else {
             throw BackendError.invalidURL
         }
@@ -51,7 +58,7 @@ final class BackendClient {
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try multipartBody(boundary: boundary, audioFileURL: audioFileURL)
+        request.httpBody = try multipartBody(boundary: boundary, audioFileURL: audioFileURL, focus: focus)
 
         let data: Data
         let response: URLResponse
@@ -76,10 +83,20 @@ final class BackendClient {
         return decoded.text
     }
 
-    private func multipartBody(boundary: String, audioFileURL: URL) throws -> Data {
+    private func multipartBody(boundary: String, audioFileURL: URL, focus: FocusContext?) throws -> Data {
         let audioData = try Data(contentsOf: audioFileURL)
 
         var body = Data()
+
+        if let focus {
+            appendTextField(&body, boundary: boundary,
+                            name: BackendClient.bundleIDField, value: focus.bundleIdentifier)
+            appendTextField(&body, boundary: boundary,
+                            name: BackendClient.appNameField, value: focus.applicationName)
+            appendTextField(&body, boundary: boundary,
+                            name: BackendClient.windowTitleField, value: focus.windowTitle)
+        }
+
         body.append("--\(boundary)\r\n".utf8Data)
         body.append(
             "Content-Disposition: form-data; name=\"\(BackendClient.audioFormField)\"; filename=\"\(audioFileURL.lastPathComponent)\"\r\n"
@@ -89,6 +106,14 @@ final class BackendClient {
         body.append(audioData)
         body.append("\r\n--\(boundary)--\r\n".utf8Data)
         return body
+    }
+
+    private func appendTextField(_ body: inout Data, boundary: String, name: String, value: String) {
+        guard !value.isEmpty else { return }
+        body.append("--\(boundary)\r\n".utf8Data)
+        body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8Data)
+        body.append(value.utf8Data)
+        body.append("\r\n".utf8Data)
     }
 }
 

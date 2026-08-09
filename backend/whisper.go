@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	whisperEndpoint  = "https://api.openai.com/v1/audio/transcriptions"
-	whisperModel     = "whisper-1"
+	whisperEndpoint   = "https://api.openai.com/v1/audio/transcriptions"
+	whisperModel      = "whisper-1"
 	whisperRequestTTL = 60 * time.Second
 )
 

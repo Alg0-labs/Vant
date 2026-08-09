@@ -12,9 +12,14 @@ import (
 // files over 25 MB, so there's no reason to accept more on the way in.
 const maxUploadBytes = 25 << 20 // 25 MB
 
-// audioFormField is the multipart field name the client uploads the
-// recording under. Must match BackendClient.swift.
-const audioFormField = "audio"
+// Multipart field names the client uploads under. These must match the
+// constants in BackendClient.swift.
+const (
+	audioFormField        = "audio"
+	focusBundleIDField    = "app_bundle_id"
+	focusAppNameField     = "app_name"
+	focusWindowTitleField = "window_title"
+)
 
 type dictateResponse struct {
 	Text string `json:"text"`
@@ -67,6 +72,14 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[dictate] received upload: filename=%q size=%d bytes content-type=%q",
 		header.Filename, header.Size, header.Header.Get("Content-Type"))
 
+	focus := FocusInfo{
+		BundleID:    r.FormValue(focusBundleIDField),
+		AppName:     r.FormValue(focusAppNameField),
+		WindowTitle: r.FormValue(focusWindowTitleField),
+	}
+	log.Printf("[focus] app=%q bundle=%q window=%q",
+		focus.AppName, focus.BundleID, focus.WindowTitle)
+
 	ctx := r.Context()
 
 	rawTranscript, err := s.whisper.Transcribe(ctx, file, header.Filename)
@@ -77,13 +90,13 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[whisper] raw transcript (%d chars):\n%s", len(rawTranscript), rawTranscript)
 
-	cleanText, err := s.claude.Cleanup(ctx, rawTranscript)
+	cleanText, appCtx, err := s.claude.Cleanup(ctx, rawTranscript, focus)
 	if err != nil {
 		log.Printf("claude cleanup failed: %v", err)
 		writeError(w, statusForUpstreamError(ctx, err), "cleanup failed: "+err.Error())
 		return
 	}
-	log.Printf("[claude] cleaned text (%d chars):\n%s", len(cleanText), cleanText)
+	log.Printf("[claude] context=%s cleaned text (%d chars):\n%s", appCtx, len(cleanText), cleanText)
 
 	writeJSON(w, http.StatusOK, dictateResponse{Text: cleanText})
 }
