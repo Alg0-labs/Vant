@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "LocalFlow",
+    name: "Vant",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "LocalFlow",
-            path: "LocalFlow",
+            name: "Vant",
+            path: "Vant",
             exclude: [
                 "Info.plist",
-                "LocalFlow.entitlements",
+                "Vant.entitlements",
             ]
         )
     ]

@@ -3,7 +3,7 @@ import AppKit
 import ApplicationServices
 import Combine
 
-/// Tracks and requests the two permissions LocalFlow needs: microphone
+/// Tracks and requests the two permissions Vant needs: microphone
 /// access to record, and Accessibility trust to inject text via CGEvent.
 @MainActor
 final class PermissionsManager: ObservableObject {

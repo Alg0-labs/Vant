@@ -21,7 +21,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Quit LocalFlow") {
+            Button("Quit Vant") {
                 NSApplication.shared.terminate(nil)
             }
         }

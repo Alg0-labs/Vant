@@ -54,7 +54,10 @@ final class BackendClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 90
+        // Must exceed the backend's worst case (60s Whisper + 30s Claude)
+        // with margin, or the client gives up on a request that would
+        // have succeeded.
+        request.timeoutInterval = 120
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")

@@ -15,7 +15,7 @@ struct FocusContext {
 
     /// Snapshots the frontmost application. Call this when recording
     /// *starts*: the user is focused on their target app at that moment,
-    /// and LocalFlow itself never becomes frontmost (it runs as an
+    /// and Vant itself never becomes frontmost (it runs as an
     /// `.accessory` app and its indicator is a non-activating panel).
     static func current() -> FocusContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }

@@ -33,7 +33,7 @@ final class AudioRecorder {
         guard pendingRecorder == nil else { return }
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("localflow-\(UUID().uuidString)")
+            .appendingPathComponent("vant-\(UUID().uuidString)")
             .appendingPathExtension("m4a")
 
         guard let recorder = try? AVAudioRecorder(url: url, settings: settings) else { return }
@@ -55,7 +55,7 @@ final class AudioRecorder {
             url = pendingFileURL
         } else {
             url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("localflow-\(UUID().uuidString)")
+                .appendingPathComponent("vant-\(UUID().uuidString)")
                 .appendingPathExtension("m4a")
             recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder.prepareToRecord()

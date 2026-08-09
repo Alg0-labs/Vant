@@ -16,14 +16,14 @@ import Foundation
 /// source" shortcut (System Settings → Keyboard → Keyboard Shortcuts →
 /// Input Sources). `RegisterEventHotKey` normally takes priority over that
 /// system default, but if input-source switching stops firing after
-/// installing LocalFlow, disable that shortcut there.
+/// installing Vant, disable that shortcut there.
 final class HotkeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private let onPress: () -> Void
     private let onRelease: () -> Void
 
-    private static let signature: OSType = 0x4C464C57 // 'LFLW'
+    private static let signature: OSType = 0x56414E54 // 'VANT'
     private static let hotKeyID: UInt32 = 1
 
     init(onPress: @escaping () -> Void, onRelease: @escaping () -> Void) {

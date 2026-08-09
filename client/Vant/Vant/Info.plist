@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>LocalFlow</string>
+    <string>Vant</string>
     <key>CFBundleDisplayName</key>
-    <string>LocalFlow</string>
+    <string>Vant</string>
     <key>CFBundleIdentifier</key>
-    <string>com.localflow.dictation</string>
+    <string>com.vant.dictation</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
@@ -15,7 +15,7 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>LocalFlow</string>
+    <string>Vant</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
@@ -23,6 +23,6 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>LocalFlow records audio only while you hold the dictation hotkey. Audio is sent to the local backend for transcription and is not retained afterward.</string>
+    <string>Vant records audio only while you hold the dictation hotkey. Audio is sent to the local backend for transcription and is not retained afterward.</string>
 </dict>
 </plist>

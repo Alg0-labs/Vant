@@ -1,4 +1,4 @@
-# LocalFlowDictation — Phase 1 Architecture Blueprint
+# Vant — Phase 1 Architecture Blueprint
 
 A local, open-source Wispr Flow alternative: a Swift/SwiftUI macOS menu-bar client paired with a Go orchestration backend that chains OpenAI Whisper transcription with Claude text cleanup, then types the result into any focused app.
 
@@ -57,11 +57,11 @@ A local, open-source Wispr Flow alternative: a Swift/SwiftUI macOS menu-bar clie
 ## 2. File Blueprint Tree
 
 ```
-LocalFlowDictation/
+Vant/
 ├── README.md
 ├── .gitignore                        # excludes .env, build artifacts
 ├── backend/
-│   ├── go.mod                        # module localflow/backend
+│   ├── go.mod                        # module vant/backend
 │   ├── go.sum
 │   ├── .env.example                  # OPENAI_API_KEY=, ANTHROPIC_API_KEY=
 │   ├── main.go                       # HTTP server, binds 127.0.0.1:8080, routes
@@ -73,12 +73,12 @@ LocalFlowDictation/
 │   ├── claude.go                     # Anthropic Messages API client (context-aware cleanup)
 │   └── config.go                     # env loading, key validation at startup
 ├── client/
-│   └── LocalFlow/
-│       ├── LocalFlow.xcodeproj
-│       └── LocalFlow/
-│           ├── LocalFlowApp.swift        # @main, MenuBarExtra scene
-│           ├── Info.plist                # NSMicrophoneUsageDescription, LSUIElement=YES
-│           ├── LocalFlow.entitlements    # audio-input; sandbox OFF (needed for CGEvent)
+│   └── Vant/
+│       ├── Vant.xcodeproj
+│       └── Vant/
+│           ├── VantApp.swift              # @main, MenuBarExtra scene
+│           ├── Info.plist                 # NSMicrophoneUsageDescription, LSUIElement=YES
+│           ├── Vant.entitlements          # audio-input; sandbox OFF (needed for CGEvent)
 │           ├── AppState.swift            # ObservableObject: idle/recording/processing
 │           ├── HotkeyManager.swift       # Carbon RegisterEventHotKey, press+release for ⌃+Space
 │           ├── FocusContext.swift        # frontmost app bundle ID/name + AX window title
@@ -96,10 +96,10 @@ LocalFlowDictation/
 ### Key structural decisions
 
 - **All backend routes are versioned under `/api/v1`** — `POST /api/v1/dictate` is the only endpoint in this phase. `routes.go` mounts a dedicated router group with the `/api/v1` prefix rather than registering paths on the root mux, so adding `/api/v2` later (or running v1 and v2 side by side during a breaking change) never touches existing handlers. The Swift client never hardcodes the bare path — `BackendClient.swift` builds requests from a single `apiV1Base = "http://127.0.0.1:8080/api/v1"` constant, so a version bump is a one-line change on both sides.
-- **Hotkey via Carbon `RegisterEventHotKey`**, not `NSEvent.addGlobalMonitorForEvents`. The Carbon API is the only sanctioned way to *consume* the keystroke system-wide (so `⌃+Space` doesn't also type a space into the focused app), and it works without Input Monitoring permission. Note: `⌃+Space` is also macOS's default "Select the previous input source" shortcut — `RegisterEventHotKey` normally takes priority, but if input-source switching stops working after installing LocalFlow, disable that shortcut in System Settings → Keyboard → Keyboard Shortcuts → Input Sources.
+- **Hotkey via Carbon `RegisterEventHotKey`**, not `NSEvent.addGlobalMonitorForEvents`. The Carbon API is the only sanctioned way to *consume* the keystroke system-wide (so `⌃+Space` doesn't also type a space into the focused app), and it works without Input Monitoring permission. Note: `⌃+Space` is also macOS's default "Select the previous input source" shortcut — `RegisterEventHotKey` normally takes priority, but if input-source switching stops working after installing Vant, disable that shortcut in System Settings → Keyboard → Keyboard Shortcuts → Input Sources.
 - **Push-to-talk, via `kEventHotKeyPressed` + `kEventHotKeyReleased`.** Carbon hotkeys expose both a press and a release event kind (not just press, which is the more commonly documented one) — `HotkeyManager` installs a handler for both and calls distinct `onPress`/`onRelease` closures. Recording lasts exactly as long as the key is held; there's no "did my second tap register" ambiguity the way there is with a toggle, which is what caused dictations to get cut off mid-sentence under the original design.
 - **Context classification lives on the backend, not the client.** The Swift side only reports raw facts about the focused app (bundle ID, name, window title); `appcontext.go` decides what that means and writes the prompt. Two reasons: prompt tuning and new app mappings ship by restarting the backend rather than rebuilding the client, and — because ad-hoc code signing invalidates TCC grants on every rebuild — that difference is the difference between an edit costing nothing and costing a re-grant of Accessibility.
-- **Focus is captured at key-down, not on completion.** By the time the transcript returns the user may have switched apps; the target surface is whatever had focus when they started speaking. LocalFlow itself never becomes frontmost (`.accessory` policy, non-activating indicator panel), so it never shadows the real target.
+- **Focus is captured at key-down, not on completion.** By the time the transcript returns the user may have switched apps; the target surface is whatever had focus when they started speaking. Vant itself never becomes frontmost (`.accessory` policy, non-activating indicator panel), so it never shadows the real target.
 - **Browsers are classified by window title.** A bundle ID of `com.google.Chrome` says nothing about whether the user is in Gmail, Claude, or Google Docs, so browsers fall through to title matching via the Accessibility API (already required for paste injection). AX reads use a 250 ms messaging timeout so an unresponsive app can't stall the hotkey path.
 - **The floating recording indicator is a non-activating `NSPanel`**, not a SwiftUI `Window` scene. A normal window would steal keyboard focus from whatever app the user is dictating into, which breaks both the UX and the CGEvent paste target. `RecordingIndicatorController` observes `AppState.$phase` and shows/hides the panel accordingly.
 - **App Sandbox disabled** in entitlements: sandboxed apps cannot post `CGEvent`s to other processes or reliably read Accessibility trust. Acceptable for a locally dev-signed app.
@@ -112,7 +112,7 @@ LocalFlowDictation/
 
 ### Microphone (TCC: kTCCServiceMicrophone)
 
-- `Info.plist` must contain `NSMicrophoneUsageDescription` ("LocalFlow records audio only while you hold the dictation hotkey; audio is processed and immediately deleted."). Without this string the app crashes on first capture.
+- `Info.plist` must contain `NSMicrophoneUsageDescription` ("Vant records audio only while you hold the dictation hotkey; audio is processed and immediately deleted."). Without this string the app crashes on first capture.
 - Request on launch with `AVCaptureDevice.requestAccess(for: .audio)`; check state with `AVCaptureDevice.authorizationStatus(for: .audio)`. If denied, a menu item deep-links to `x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone`.
 
 ### Accessibility (TCC: kTCCServiceAccessibility) — required for CGEvent injection
