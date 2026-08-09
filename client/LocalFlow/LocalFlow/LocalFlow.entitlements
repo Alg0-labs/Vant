@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      App Sandbox is intentionally omitted (absent = off). A sandboxed
+      process cannot post CGEvents to other applications or reliably read
+      Accessibility trust, both of which TextInjector depends on. See
+      PLAN.md §2 "Key structural decisions".
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+</plist>
