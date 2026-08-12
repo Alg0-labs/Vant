@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -87,8 +88,14 @@ func (c *ClaudeClient) Cleanup(ctx context.Context, rawTranscript string, focus 
 		System: []anthropic.TextBlockParam{
 			{Text: systemPrompt},
 		},
+		// Delimited so the transcript is unambiguously data. Without this,
+		// dictation phrased as a question ("what was on my calendar
+		// yesterday") reads as a question addressed to the model, and it
+		// answers instead of rewriting.
 		Messages: []anthropic.MessageParam{
-			anthropic.NewUserMessage(anthropic.NewTextBlock(rawTranscript)),
+			anthropic.NewUserMessage(anthropic.NewTextBlock(
+				"<transcript>" + rawTranscript + "</transcript>",
+			)),
 		},
 		// Thinking is explicitly OFF. This is the single largest latency
 		// win in the pipeline: Sonnet 5 and later run adaptive thinking at
@@ -118,7 +125,20 @@ func (c *ClaudeClient) Cleanup(ctx context.Context, rawTranscript string, focus 
 
 	for _, block := range resp.Content {
 		if text, ok := block.AsAny().(anthropic.TextBlock); ok {
-			return strings.TrimSpace(text.Text), appCtx, nil
+			rewrite := strings.TrimSpace(text.Text)
+
+			// Safety net: if the model answered the dictation instead of
+			// rewriting it, paste the raw transcript rather than a reply
+			// the user never intended to type. Slightly unpolished text is
+			// a far better failure than "I don't have access to your
+			// calendar" landing in their message.
+			if LooksLikeModelBrokeCharacter(rawTranscript, rewrite, appCtx) {
+				log.Printf("[guard] discarding rewrite (%d chars from %d-char transcript, context=%s); pasting raw transcript instead:\n%s",
+					len(rewrite), len(rawTranscript), appCtx, rewrite)
+				return strings.TrimSpace(rawTranscript), appCtx, nil
+			}
+
+			return rewrite, appCtx, nil
 		}
 	}
 
