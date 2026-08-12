@@ -22,6 +22,8 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Vant transcribes your dictation on this Mac using Apple's on-device speech recognition. Nothing is sent to Apple, and transcription happens locally so text appears almost instantly.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Vant records audio only while you hold the dictation hotkey. Audio is sent to the local backend for transcription and is not retained afterward.</string>
 </dict>

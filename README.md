@@ -45,6 +45,7 @@ open client/Vant/Vant.app
 On first launch, Vant will ask for:
 
 - **Microphone access** — required to record.
+- **Speech recognition** — enables on-device transcription, which is what makes dictation land in about a second instead of four. Declining is non-fatal: Vant falls back to cloud transcription and the menu bar tells you which path is active.
 - **Accessibility access** (System Settings → Privacy & Security → Accessibility) — required to paste the cleaned text into other apps via a synthetic `⌘V`. macOS won't grant this programmatically; toggle it on manually when prompted.
 
 The app runs as a menu-bar-only icon (no Dock entry). Click it to see status and permission shortcuts.

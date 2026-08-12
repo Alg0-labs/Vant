@@ -201,28 +201,41 @@ func classifyByTitle(title string) (AppContext, bool) {
 	return "", false
 }
 
-const basePrompt = `You are a dictation post-processor. You receive a raw voice transcript and return text that will be pasted directly into the application described below, so your reply must be ready to paste with no further editing.
+// basePrompt holds the rules that apply in every context. It is kept
+// deliberately terse: it is prefilled on every dictation, so each extra
+// line costs latency on the critical path.
+const basePrompt = `Rewrite the dictated transcript as finished text, ready to paste verbatim into the target app.
 
-Always:
-- Remove filler words (um, uh, like, so, you know), false starts, repetitions, and stutters.
-- Fix spelling, grammar, wording, punctuation, structure, and formatting.
-- Preserve the speaker's meaning and intent. Never invent facts, names, numbers, or requirements that were not dictated.
-- If the application context and the dictated text conflict, follow the clear intent of the text.
-- If the intent is ambiguous, make the smallest reasonable correction rather than inventing information.
-- Reply with only the finished text. No preamble, no commentary, no explanation of what you changed, no surrounding quotation marks.`
+Rules:
+- Cut fillers (um, uh, like, you know), false starts, and repetitions.
+- Fix grammar, spelling, punctuation, and capitalization.
+- Keep the speaker's meaning, facts, and voice. Invent nothing.
+- Spoken self-corrections win: "send it Tuesday, no, Wednesday" means Wednesday.
+- Repair obvious mis-transcriptions from context (homophones, split words, mangled product names).
+- If the text's intent conflicts with the target app, follow the text.
+- When ambiguous, make the smallest fix. Never guess at missing content.
+- Output only the final text: no preamble, quotes, code fences, or commentary.`
 
 var contextInstructions = map[AppContext]string{
-	ContextAIAssistant: `The text is going into an AI assistant, so rewrite it as a prompt: clear, specific, well-structured, and easy for a model to follow. State the task and any constraints explicitly, and break multi-part requests into readable structure. Do not answer the prompt yourself, and do not add requirements the speaker did not express.`,
+	ContextAIAssistant: `Target: a prompt for an AI assistant.
+Turn rambling speech into a precise request. Lead with the task, then constraints and context. Use short paragraphs or bullets for multi-part asks. Keep every requirement stated and add none. Do not answer the request — write it.`,
 
-	ContextEmail: `The text is going into an email client, so format it as a proper email: an appropriate subject line, greeting, body, and closing where each is warranted. Default to a professional but natural tone. If the dictation is clearly just a reply or a fragment of a body, format only that rather than inventing a full email around it.`,
+	ContextEmail: `Target: an email.
+Write body text in a professional but natural register: greeting, tight paragraphs, sign-off. Prepend a "Subject: ..." line only if the speaker is clearly starting a new email rather than replying. Turn spoken lists into bullets. No emoji.`,
 
-	ContextCode: `The text is going into a terminal, IDE, or other coding tool, so treat it as a technical request, command, or code. Fix syntax and formatting, use exact technical terms with correct casing for commands, flags, paths, and identifiers, and make the intended action clear. If it is a shell command, reply with the command itself and nothing around it.`,
+	ContextCode: `Target: a terminal or code editor.
+If the speaker described a command, output only that command — correctly quoted, flagged, and escaped. If they described code, output only the code. Otherwise write a precise technical request.
+Expand spoken syntax: "dash dash force" is --force, "dot slash" is ./, "tilde slash" is ~/, spoken "slash" inside a path is /, "dot py" is .py.
+Use exact casing for tools, flags, paths, and identifiers (npm, kubectl, PostgreSQL, camelCase names).`,
 
-	ContextMessaging: `The text is going into a chat app, so write it as a natural, concise chat message suited to that platform. Keep it conversational rather than formal: no subject line, no formal greeting, no sign-off.`,
+	ContextMessaging: `Target: a chat message.
+One or two short conversational sentences. No greeting, no sign-off, no subject line, no bullet lists. Keep it direct and skimmable. Preserve @mentions and #channels as spoken. Add emoji only if dictated.`,
 
-	ContextWriting: `The text is going into a document or writing app, so improve grammar, clarity, formatting, and overall structure while preserving the author's voice. Use paragraph breaks where the content shifts, and lists only where the content genuinely is a list.`,
+	ContextWriting: `Target: a document.
+Well-formed prose in the speaker's voice. Break paragraphs at topic shifts. Use bullets only for genuine lists, and headings only if the speaker asked for sections. No padding and no invented structure.`,
 
-	ContextGeneric: `The application in focus is general-purpose or unknown, so clean the text into clear, well-punctuated prose without imposing any particular document format.`,
+	ContextGeneric: `Target: an unknown plain text field.
+Clean, well-punctuated prose. Impose no document structure: no headings, no subject line, no sign-off, no bullets unless the speaker dictated a list.`,
 }
 
 // SystemPromptFor builds the Claude system prompt for the app that had

@@ -16,26 +16,47 @@ enum DictationPhase: Equatable {
     }
 }
 
-/// Orchestrates the push-to-talk record → upload → paste flow and owns the
-/// phase the menu bar UI and the floating recording indicator render.
+/// Orchestrates the push-to-talk record → transcribe → clean → paste flow
+/// and owns the state the menu bar and visualizer render.
 ///
-/// Recording is push-to-talk, not toggle: `hotkeyPressed()` starts it,
-/// `hotkeyReleased()` (or the indicator's Stop button, via
-/// `stopButtonTapped()`) ends it. Recording lasts exactly as long as the
-/// key is physically held, which removes the "did my second tap register"
-/// ambiguity a toggle has — the usual cause of a dictation getting cut off
-/// mid-sentence.
+/// Two transcription paths exist, chosen per dictation:
+///
+/// - **Fast (default):** `SpeechTranscriber` recognizes speech on-device
+///   *while* the user talks, so at key-release only the Claude cleanup
+///   remains (`POST /api/v1/format`). This is what keeps latency near a
+///   second instead of ~4.
+/// - **Fallback:** if on-device recognition is unavailable or unauthorized,
+///   `AudioRecorder` captures audio and the backend runs Whisper then
+///   Claude (`POST /api/v1/dictate`). Slower, but more robust on accents
+///   and in noisy rooms.
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
 
     @Published private(set) var phase: DictationPhase = .idle
 
+    /// Microphone amplitude, 0...1, republished at ~30 Hz while recording
+    /// so the visualizer tracks real audio.
+    @Published private(set) var audioLevel: Float = 0
+
+    /// Rolling window of recent levels, oldest first — the visualizer's bar
+    /// heights. Maintained here rather than in the view so the view stays a
+    /// pure function of state and needs no per-frame mutation.
+    @Published private(set) var levelHistory: [Float] = Array(repeating: 0, count: AppState.levelHistoryLength)
+
+    static let levelHistoryLength = 34
+
     let permissions = PermissionsManager()
 
+    private let transcriber = SpeechTranscriber()
     private let audioRecorder = AudioRecorder()
     private let backendClient = BackendClient()
     private var hotkeyManager: HotkeyManager?
+    private var levelTimer: Timer?
+
+    /// Which path the in-flight dictation is using.
+    private enum CaptureMode { case onDevice, audioUpload }
+    private var captureMode: CaptureMode = .onDevice
 
     /// The app that had focus when the current recording started. Captured
     /// at press time rather than on completion, because by the time the
@@ -45,7 +66,7 @@ final class AppState: ObservableObject {
     private init() {}
 
     /// Called once at launch: pre-warms the recorder, registers the global
-    /// hotkey, and kicks off the initial microphone permission check.
+    /// hotkey, and requests the permissions dictation needs.
     func start() {
         guard hotkeyManager == nil else { return }
 
@@ -63,6 +84,7 @@ final class AppState: ObservableObject {
         hotkeyManager = manager
 
         permissions.requestMicrophoneAccess()
+        Task { await permissions.requestSpeechRecognition() }
     }
 
     func hotkeyPressed() {
@@ -79,11 +101,13 @@ final class AppState: ObservableObject {
         finishRecording()
     }
 
-    /// Equivalent to releasing the hotkey — wired to the floating
-    /// indicator's Stop button.
+    /// Equivalent to releasing the hotkey — wired to the visualizer's Stop
+    /// button.
     func stopButtonTapped() {
         hotkeyReleased()
     }
+
+    // MARK: - Recording
 
     private func beginRecording() {
         guard permissions.microphoneAuthorized else {
@@ -99,34 +123,105 @@ final class AppState: ObservableObject {
 
         focusAtRecordingStart = FocusContext.current()
 
+        if transcriber.isAvailable {
+            do {
+                try transcriber.start()
+                captureMode = .onDevice
+                phase = .recording
+                startLevelPolling()
+                return
+            } catch {
+                // Fall through to the audio-upload path rather than failing
+                // the dictation outright.
+                NSLog("Vant: on-device transcription unavailable (\(error.localizedDescription)); using audio upload")
+            }
+        }
+
         do {
             try audioRecorder.startRecording()
+            captureMode = .audioUpload
             phase = .recording
+            startLevelPolling()
         } catch {
             phase = .error("Couldn't start recording: \(error.localizedDescription)")
         }
     }
 
     private func finishRecording() {
-        guard let fileURL = audioRecorder.stopRecording() else {
-            phase = .idle
-            return
-        }
         let focus = focusAtRecordingStart
         focusAtRecordingStart = nil
-        phase = .processing
+        stopLevelPolling()
 
-        Task {
-            defer { try? FileManager.default.removeItem(at: fileURL) }
-            do {
-                let text = try await backendClient.dictate(audioFileURL: fileURL, focus: focus)
-                if !text.isEmpty {
-                    TextInjector.paste(text)
+        switch captureMode {
+        case .onDevice:
+            phase = .processing
+            Task {
+                let transcript = await transcriber.stopAndFinish()
+                guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    phase = .idle // nothing was said
+                    return
                 }
+                await deliver { try await self.backendClient.format(text: transcript, focus: focus) }
+            }
+
+        case .audioUpload:
+            guard let fileURL = audioRecorder.stopRecording() else {
                 phase = .idle
-            } catch {
-                phase = .error(error.localizedDescription)
+                return
+            }
+            phase = .processing
+            Task {
+                defer { try? FileManager.default.removeItem(at: fileURL) }
+                await deliver { try await self.backendClient.dictate(audioFileURL: fileURL, focus: focus) }
             }
         }
+    }
+
+    /// Runs a backend call and pastes its result, mapping failures onto the
+    /// error phase. Nothing is ever pasted on failure.
+    private func deliver(_ work: () async throws -> String) async {
+        do {
+            let text = try await work()
+            if !text.isEmpty {
+                TextInjector.paste(text)
+            }
+            phase = .idle
+        } catch {
+            phase = .error(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Level polling
+
+    /// Republishes the active capture path's level at ~30 Hz. Polling is
+    /// deliberate: the audio tap runs on a realtime thread and must not hop
+    /// to the main actor per buffer (hundreds of times a second).
+    private func startLevelPolling() {
+        levelTimer?.invalidate()
+        levelHistory = Array(repeating: 0, count: Self.levelHistoryLength)
+        levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let level = switch self.captureMode {
+                case .onDevice: self.transcriber.level
+                case .audioUpload: self.audioRecorder.level
+                }
+                self.audioLevel = level
+
+                // Newest sample enters on the right; history scrolls left.
+                // The floor keeps a visible idle heartbeat during silence
+                // rather than a dead flat line.
+                var next = self.levelHistory
+                next.removeFirst()
+                next.append(max(0.05, level))
+                self.levelHistory = next
+            }
+        }
+    }
+
+    private func stopLevelPolling() {
+        levelTimer?.invalidate()
+        levelTimer = nil
+        audioLevel = 0
     }
 }

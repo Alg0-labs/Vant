@@ -41,6 +41,28 @@ final class BackendClient {
         self.session = session
     }
 
+    /// Sends an already-transcribed string to `POST /api/v1/format` — the
+    /// fast path, used when the client transcribed on-device. Skips Whisper
+    /// entirely, so only the Claude cleanup is on the critical path.
+    func format(text: String, focus: FocusContext?) async throws -> String {
+        guard let url = URL(string: "\(BackendClient.apiV1Base)/format") else {
+            throw BackendError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(FormatPayload(
+            text: text,
+            appBundleID: focus?.bundleIdentifier ?? "",
+            appName: focus?.applicationName ?? "",
+            windowTitle: focus?.windowTitle ?? ""
+        ))
+
+        return try await send(request)
+    }
+
     /// Uploads the recording at `audioFileURL` to `POST /api/v1/dictate`
     /// and returns the cleaned transcript.
     ///
@@ -63,6 +85,11 @@ final class BackendClient {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = try multipartBody(boundary: boundary, audioFileURL: audioFileURL, focus: focus)
 
+        return try await send(request)
+    }
+
+    /// Performs the request and unwraps `{"text": ...}` / `{"error": ...}`.
+    private func send(_ request: URLRequest) async throws -> String {
         let data: Data
         let response: URLResponse
         do {
@@ -82,8 +109,7 @@ final class BackendClient {
             throw BackendError.server("Backend returned status \(httpResponse.statusCode).")
         }
 
-        let decoded = try JSONDecoder().decode(DictatePayload.self, from: data)
-        return decoded.text
+        return try JSONDecoder().decode(DictatePayload.self, from: data).text
     }
 
     private func multipartBody(boundary: String, audioFileURL: URL, focus: FocusContext?) throws -> Data {
@@ -122,6 +148,21 @@ final class BackendClient {
 
 private struct DictatePayload: Decodable {
     let text: String
+}
+
+/// Body of `POST /api/v1/format`. Keys match the Go `formatRequest` struct.
+private struct FormatPayload: Encodable {
+    let text: String
+    let appBundleID: String
+    let appName: String
+    let windowTitle: String
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case appBundleID = "app_bundle_id"
+        case appName = "app_name"
+        case windowTitle = "window_title"
+    }
 }
 
 private struct ErrorPayload: Decodable {

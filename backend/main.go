@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -13,9 +14,13 @@ func main() {
 	}
 
 	server := &Server{
-		whisper: NewWhisperClient(cfg.OpenAIAPIKey),
-		claude:  NewClaudeClient(cfg.AnthropicAPIKey),
+		whisper: NewWhisperClient(cfg.OpenAIAPIKey, cfg.TranscribeModel),
+		claude:  NewClaudeClient(cfg.AnthropicAPIKey, cfg.AnthropicModel),
 	}
+
+	// Prime TLS to both upstreams so the first dictation doesn't pay a
+	// cold handshake on the critical path.
+	WarmUpstreamConnections(context.Background())
 
 	// WriteTimeout spans the whole handler, so it has to exceed the worst
 	// case of both upstream calls run back to back — otherwise a slow but

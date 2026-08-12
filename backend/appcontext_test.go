@@ -145,10 +145,10 @@ func TestSystemPromptFor(t *testing.T) {
 		if appCtx != ContextEmail {
 			t.Fatalf("context = %q, want %q", appCtx, ContextEmail)
 		}
-		if !strings.Contains(prompt, "email client") {
+		if !strings.Contains(prompt, "Target: an email.") {
 			t.Errorf("prompt missing email instruction:\n%s", prompt)
 		}
-		if !strings.Contains(prompt, "Remove filler words") {
+		if !strings.Contains(prompt, "Cut fillers") {
 			t.Errorf("prompt missing shared base rules:\n%s", prompt)
 		}
 	})

@@ -114,6 +114,21 @@ Following a single `⌃Space` press end to end. File references are the code tha
 
 ## 5. API contract
 
+There are two endpoints, corresponding to the two transcription paths (§6a):
+
+- `POST /api/v1/format` — **fast path.** Client already transcribed on-device; body is JSON text. Claude only.
+- `POST /api/v1/dictate` — **fallback.** Client uploads audio; Whisper then Claude.
+
+### `POST /api/v1/format`
+
+**Request** — `application/json`, max 1 MB:
+
+```json
+{ "text": "...", "app_bundle_id": "...", "app_name": "...", "window_title": "..." }
+```
+
+Only `text` is meaningful for output; the focus fields select the prompt. Responses match `/dictate` below.
+
 ### `POST /api/v1/dictate`
 
 Everything is versioned under `/api/v1`. The client builds every URL from one constant (`BackendClient.apiV1Base`) and the server mounts one prefix (`routes.go`), so a version bump is a one-line change on each side and v1/v2 can run side by side.
@@ -142,6 +157,30 @@ Omitting all three focus fields is valid and yields generic cleanup.
 Errors are `{"error": "..."}`. The client surfaces them as an `.error` phase; **failed text is never pasted**.
 
 ---
+
+## 6a. Latency budget
+
+Dictation should feel instant, so latency is a first-class constraint rather than an afterthought. Measured on a ~4 s clip:
+
+| Configuration | Whisper | Claude | Total |
+|---|---|---|---|
+| Original | ~1230 ms | ~2280 ms | **~4000 ms** |
+| Claude thinking off + Haiku 4.5 | ~1500 ms | ~1150 ms | ~2400 ms |
+| On-device transcription (current) | 0 ms | ~1000 ms | **~1000 ms** |
+
+Three findings drove this:
+
+1. **Adaptive thinking was the biggest single cost.** Claude Sonnet 5 and later run adaptive thinking at `high` effort *by default*, so every dictation was doing extended reasoning to remove filler words. `claude.go` now sets `thinking: disabled` explicitly and gates `effort: low` to models that accept the parameter. This alone halved the Claude stage.
+2. **Transcription model choice is irrelevant to speed.** `whisper-1`, `gpt-4o-mini-transcribe`, and `gpt-4o-transcribe` all measured ~0.9–1.8 s on short clips — the cost is the network round trip, not the model. Switching buys nothing, so `whisper-1` stays (override with `OPENAI_TRANSCRIBE_MODEL`).
+3. **Therefore <1 s is unreachable while transcription is a network call.** Cloud transcription alone averages ~1.2 s. The only way past it is to stop making the call — hence on-device recognition.
+
+**The fast path:** `SpeechTranscriber` runs Apple's Speech framework with `requiresOnDeviceRecognition = true`, fed from a live `AVAudioEngine` tap. Recognition happens *concurrently with speech*, so at key-release the transcript already exists and only the Claude call remains. Total lands at ~0.9–1.2 s.
+
+**The trade:** Whisper is more accurate on strong accents and in noisy rooms. When on-device recognition is unavailable or unauthorized, `AppState` silently falls back to the audio-upload path; the menu bar shows which one is active, since the fallback is several times slower and users otherwise have no way to know why dictation feels sluggish.
+
+Anything else on the critical path is small but deliberate: a shared `http.Transport` pools connections to both upstreams and `WarmUpstreamConnections` pre-establishes TLS at startup and re-warms every 4 minutes, so a cold handshake (100–300 ms) never lands on a dictation.
+
+> **If latency regresses, read `[timing]` in the backend log first** — it prints the per-stage split for every dictation, which localizes the problem immediately.
 
 ## 6. Context classification
 
