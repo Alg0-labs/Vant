@@ -14,6 +14,8 @@ struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             }
 
+            transcriptionPathRow
+
             if !appState.permissions.microphoneAuthorized || !appState.permissions.accessibilityTrusted {
                 Divider()
                 permissionsSection
@@ -21,7 +23,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Quit LocalFlow") {
+            Button("Quit Vant") {
                 NSApplication.shared.terminate(nil)
             }
         }
@@ -53,6 +55,22 @@ struct MenuBarView: View {
         case .recording: return "Recording… release ⌃Space to stop"
         case .processing: return "Cleaning up…"
         case .error: return "Needs attention"
+        }
+    }
+
+    /// Surfaces which transcription path is in use. Worth showing: the
+    /// fallback path is several times slower, and without this the user has
+    /// no way to tell why dictation suddenly feels sluggish.
+    @ViewBuilder
+    private var transcriptionPathRow: some View {
+        if appState.permissions.speechRecognitionAuthorized {
+            Label("On-device transcription", systemImage: "bolt.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Label("Cloud transcription — slower", systemImage: "cloud")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

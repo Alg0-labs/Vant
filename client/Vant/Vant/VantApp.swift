@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 
 @main
-struct LocalFlowApp: App {
+struct VantApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState.shared
 
     var body: some Scene {
-        MenuBarExtra("LocalFlow", systemImage: appState.phase.menuBarSymbol) {
+        MenuBarExtra("Vant", systemImage: appState.phase.menuBarSymbol) {
             MenuBarView(appState: appState)
         }
         .menuBarExtraStyle(.window)

@@ -13,23 +13,38 @@ import (
 )
 
 const (
-	whisperEndpoint  = "https://api.openai.com/v1/audio/transcriptions"
-	whisperModel     = "whisper-1"
-	whisperRequestTTL = 60 * time.Second
+	whisperEndpoint = "https://api.openai.com/v1/audio/transcriptions"
+	// whisper-1 measured the same latency as gpt-4o-transcribe and
+	// gpt-4o-mini-transcribe on short clips (~0.9-1.8s, dominated by
+	// network round trip rather than model), so there's no speed reason to
+	// switch. Override with OPENAI_TRANSCRIBE_MODEL if that changes.
+	defaultWhisperModel = "whisper-1"
+	whisperRequestTTL   = 60 * time.Second
 )
 
 // WhisperClient transcribes audio via the OpenAI Whisper API.
 type WhisperClient struct {
 	apiKey     string
+	model      string
 	httpClient *http.Client
 }
 
-// NewWhisperClient builds a WhisperClient authenticated with apiKey. Every
-// call made through it is bounded by whisperRequestTTL.
-func NewWhisperClient(apiKey string) *WhisperClient {
+// NewWhisperClient builds a WhisperClient authenticated with apiKey. An
+// empty model falls back to defaultWhisperModel. Every call made through it
+// is bounded by whisperRequestTTL.
+func NewWhisperClient(apiKey string, model string) *WhisperClient {
+	selected := defaultWhisperModel
+	if strings.TrimSpace(model) != "" {
+		selected = strings.TrimSpace(model)
+	}
+
 	return &WhisperClient{
-		apiKey:     apiKey,
-		httpClient: &http.Client{Timeout: whisperRequestTTL},
+		apiKey: apiKey,
+		model:  selected,
+		httpClient: &http.Client{
+			Timeout:   whisperRequestTTL,
+			Transport: sharedTransport(),
+		},
 	}
 }
 
@@ -59,7 +74,7 @@ func (w *WhisperClient) Transcribe(ctx context.Context, r io.Reader, filename st
 	if _, err := io.Copy(part, r); err != nil {
 		return "", fmt.Errorf("reading audio for whisper: %w", err)
 	}
-	if err := mw.WriteField("model", whisperModel); err != nil {
+	if err := mw.WriteField("model", w.model); err != nil {
 		return "", fmt.Errorf("building whisper request: %w", err)
 	}
 	if err := mw.Close(); err != nil {

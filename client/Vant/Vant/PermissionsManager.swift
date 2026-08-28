@@ -2,19 +2,33 @@ import AVFoundation
 import AppKit
 import ApplicationServices
 import Combine
+import Speech
 
-/// Tracks and requests the two permissions LocalFlow needs: microphone
+/// Tracks and requests the two permissions Vant needs: microphone
 /// access to record, and Accessibility trust to inject text via CGEvent.
 @MainActor
 final class PermissionsManager: ObservableObject {
     @Published private(set) var microphoneAuthorized = false
     @Published private(set) var accessibilityTrusted = false
 
+    /// Speech recognition is a separate TCC service from the microphone.
+    /// Without it Vant still works, but falls back to the slower
+    /// upload-audio-to-Whisper path.
+    @Published private(set) var speechRecognitionAuthorized = false
+
     private var accessibilityPollTimer: Timer?
 
     init() {
         refreshMicrophoneStatus()
         refreshAccessibilityStatus(prompt: false)
+        speechRecognitionAuthorized = SFSpeechRecognizer.authorizationStatus() == .authorized
+    }
+
+    /// Requests speech-recognition access. Declining is non-fatal — it just
+    /// costs latency, since dictation then routes through Whisper.
+    func requestSpeechRecognition() async {
+        let granted = await SpeechTranscriber.requestAuthorization()
+        speechRecognitionAuthorized = granted
     }
 
     func requestMicrophoneAccess() {

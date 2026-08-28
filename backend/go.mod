@@ -1,4 +1,4 @@
-module localflow/backend
+module vant/backend
 
 go 1.26.5
 

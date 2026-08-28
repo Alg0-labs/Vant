@@ -33,10 +33,11 @@ final class AudioRecorder {
         guard pendingRecorder == nil else { return }
 
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("localflow-\(UUID().uuidString)")
+            .appendingPathComponent("vant-\(UUID().uuidString)")
             .appendingPathExtension("m4a")
 
         guard let recorder = try? AVAudioRecorder(url: url, settings: settings) else { return }
+        recorder.isMeteringEnabled = true
         recorder.prepareToRecord()
 
         pendingRecorder = recorder
@@ -55,7 +56,7 @@ final class AudioRecorder {
             url = pendingFileURL
         } else {
             url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("localflow-\(UUID().uuidString)")
+                .appendingPathComponent("vant-\(UUID().uuidString)")
                 .appendingPathExtension("m4a")
             recorder = try AVAudioRecorder(url: url, settings: settings)
             recorder.prepareToRecord()
@@ -87,6 +88,16 @@ final class AudioRecorder {
 
     var isRecording: Bool {
         recorder?.isRecording ?? false
+    }
+
+    /// Normalized microphone level, 0...1, for the visualizer on the
+    /// fallback path. Mapped across the same 50 dB window the on-device
+    /// transcriber uses so both paths look identical on screen.
+    var level: Float {
+        guard let recorder, recorder.isRecording else { return 0 }
+        recorder.updateMeters()
+        let db = recorder.averagePower(forChannel: 0)
+        return max(0, min(1, (db + 50) / 50))
     }
 }
 

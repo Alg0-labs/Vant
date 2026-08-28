@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
@@ -13,9 +14,19 @@ func main() {
 	}
 
 	server := &Server{
-		whisper: NewWhisperClient(cfg.OpenAIAPIKey),
-		claude:  NewClaudeClient(cfg.AnthropicAPIKey),
+		whisper: NewWhisperClient(cfg.OpenAIAPIKey, cfg.TranscribeModel),
+		claude:  NewClaudeClient(cfg.AnthropicAPIKey, cfg.AnthropicModel),
 	}
+
+	// Prime TLS to both upstreams so the first dictation doesn't pay a
+	// cold handshake on the critical path.
+	WarmUpstreamConnections(context.Background())
+
+	// WriteTimeout spans the whole handler, so it has to exceed the worst
+	// case of both upstream calls run back to back — otherwise a slow but
+	// otherwise successful dictation has its connection killed mid-flight.
+	// Derived from the upstream budgets so the two can't drift apart.
+	writeTimeout := whisperRequestTTL + claudeRequestTTL + 30*time.Second
 
 	httpServer := &http.Server{
 		// Binding to 127.0.0.1 (never 0.0.0.0) keeps the server off the
@@ -23,11 +34,11 @@ func main() {
 		Addr:         cfg.Addr,
 		Handler:      newRouter(server),
 		ReadTimeout:  65 * time.Second,
-		WriteTimeout: 65 * time.Second,
+		WriteTimeout: writeTimeout,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("LocalFlow backend listening on http://%s%s/dictate", cfg.Addr, apiV1Prefix)
+	log.Printf("Vant backend listening on http://%s%s/dictate", cfg.Addr, apiV1Prefix)
 	if err := httpServer.ListenAndServe(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

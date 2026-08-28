@@ -13,6 +13,11 @@ type Config struct {
 	OpenAIAPIKey    string
 	AnthropicAPIKey string
 	Addr            string // host:port the HTTP server binds to
+
+	// Optional model overrides. Empty means "use the client's default",
+	// which is tuned for latency — see claude.go / whisper.go.
+	AnthropicModel  string
+	TranscribeModel string
 }
 
 // loadEnvFile reads simple KEY=VALUE lines from path into the process
@@ -64,6 +69,8 @@ func loadConfig() (Config, error) {
 		OpenAIAPIKey:    os.Getenv("OPENAI_API_KEY"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		Addr:            "127.0.0.1:8080",
+		AnthropicModel:  os.Getenv("ANTHROPIC_MODEL"),
+		TranscribeModel: os.Getenv("OPENAI_TRANSCRIBE_MODEL"),
 	}
 
 	var missing []string

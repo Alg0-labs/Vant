@@ -6,15 +6,21 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 )
 
 // maxUploadBytes caps the incoming multipart body. Whisper itself rejects
 // files over 25 MB, so there's no reason to accept more on the way in.
 const maxUploadBytes = 25 << 20 // 25 MB
 
-// audioFormField is the multipart field name the client uploads the
-// recording under. Must match BackendClient.swift.
-const audioFormField = "audio"
+// Multipart field names the client uploads under. These must match the
+// constants in BackendClient.swift.
+const (
+	audioFormField        = "audio"
+	focusBundleIDField    = "app_bundle_id"
+	focusAppNameField     = "app_name"
+	focusWindowTitleField = "window_title"
+)
 
 type dictateResponse struct {
 	Text string `json:"text"`
@@ -67,7 +73,16 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[dictate] received upload: filename=%q size=%d bytes content-type=%q",
 		header.Filename, header.Size, header.Header.Get("Content-Type"))
 
+	focus := FocusInfo{
+		BundleID:    r.FormValue(focusBundleIDField),
+		AppName:     r.FormValue(focusAppNameField),
+		WindowTitle: r.FormValue(focusWindowTitleField),
+	}
+	log.Printf("[focus] app=%q bundle=%q window=%q",
+		focus.AppName, focus.BundleID, focus.WindowTitle)
+
 	ctx := r.Context()
+	start := time.Now()
 
 	rawTranscript, err := s.whisper.Transcribe(ctx, file, header.Filename)
 	if err != nil {
@@ -75,15 +90,71 @@ func (s *Server) handleDictate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, statusForUpstreamError(ctx, err), "transcription failed: "+err.Error())
 		return
 	}
-	log.Printf("[whisper] raw transcript (%d chars):\n%s", len(rawTranscript), rawTranscript)
+	whisperDone := time.Now()
+	log.Printf("[whisper] %dms — raw transcript (%d chars):\n%s",
+		whisperDone.Sub(start).Milliseconds(), len(rawTranscript), rawTranscript)
 
-	cleanText, err := s.claude.Cleanup(ctx, rawTranscript)
+	cleanText, appCtx, err := s.claude.Cleanup(ctx, rawTranscript, focus)
 	if err != nil {
 		log.Printf("claude cleanup failed: %v", err)
 		writeError(w, statusForUpstreamError(ctx, err), "cleanup failed: "+err.Error())
 		return
 	}
-	log.Printf("[claude] cleaned text (%d chars):\n%s", len(cleanText), cleanText)
+	claudeDone := time.Now()
+	log.Printf("[claude] %dms — context=%s cleaned text (%d chars):\n%s",
+		claudeDone.Sub(whisperDone).Milliseconds(), appCtx, len(cleanText), cleanText)
+	log.Printf("[timing] whisper=%dms claude=%dms total=%dms",
+		whisperDone.Sub(start).Milliseconds(),
+		claudeDone.Sub(whisperDone).Milliseconds(),
+		claudeDone.Sub(start).Milliseconds())
+
+	writeJSON(w, http.StatusOK, dictateResponse{Text: cleanText})
+}
+
+type formatRequest struct {
+	Text        string `json:"text"`
+	BundleID    string `json:"app_bundle_id"`
+	AppName     string `json:"app_name"`
+	WindowTitle string `json:"window_title"`
+}
+
+// handleFormat implements POST /api/v1/format: the fast path. The client
+// has already transcribed on-device (Apple's Speech framework, which runs
+// during recording), so this skips Whisper entirely and only does the
+// Claude cleanup — roughly halving end-to-end latency.
+func (s *Server) handleFormat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "only POST is supported")
+		return
+	}
+
+	var req formatRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+
+	focus := FocusInfo{
+		BundleID:    req.BundleID,
+		AppName:     req.AppName,
+		WindowTitle: req.WindowTitle,
+	}
+	log.Printf("[focus] app=%q bundle=%q window=%q", focus.AppName, focus.BundleID, focus.WindowTitle)
+	log.Printf("[ondevice] transcript (%d chars):\n%s", len(req.Text), req.Text)
+
+	start := time.Now()
+	cleanText, appCtx, err := s.claude.Cleanup(r.Context(), req.Text, focus)
+	if err != nil {
+		log.Printf("claude cleanup failed: %v", err)
+		writeError(w, statusForUpstreamError(r.Context(), err), "cleanup failed: "+err.Error())
+		return
+	}
+
+	elapsed := time.Since(start)
+	log.Printf("[claude] %dms — context=%s cleaned text (%d chars):\n%s",
+		elapsed.Milliseconds(), appCtx, len(cleanText), cleanText)
+	log.Printf("[timing] ondevice_transcribe=0ms claude=%dms total=%dms",
+		elapsed.Milliseconds(), elapsed.Milliseconds())
 
 	writeJSON(w, http.StatusOK, dictateResponse{Text: cleanText})
 }

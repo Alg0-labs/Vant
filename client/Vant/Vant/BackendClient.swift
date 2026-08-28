@@ -1,0 +1,174 @@
+import Foundation
+
+enum BackendError: Error, LocalizedError {
+    case invalidURL
+    case invalidResponse
+    case server(String)
+    case network(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Couldn't build the backend request URL."
+        case .invalidResponse:
+            return "The backend returned an unexpected response."
+        case .server(let message):
+            return message
+        case .network(let error):
+            return error.localizedDescription
+        }
+    }
+}
+
+/// Talks to the local Go backend over HTTP.
+///
+/// `apiV1Base` is the single source of truth for the backend's versioned
+/// API prefix — every request is built from it, so a version bump
+/// (`/api/v1` → `/api/v2`) is a one-line change here and nowhere else.
+final class BackendClient {
+    static let apiV1Base = "http://127.0.0.1:8080/api/v1"
+
+    /// Multipart field names. These must match the corresponding
+    /// constants in the backend's handlers.go.
+    private static let audioFormField = "audio"
+    private static let bundleIDField = "app_bundle_id"
+    private static let appNameField = "app_name"
+    private static let windowTitleField = "window_title"
+
+    private let session: URLSession
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    /// Sends an already-transcribed string to `POST /api/v1/format` — the
+    /// fast path, used when the client transcribed on-device. Skips Whisper
+    /// entirely, so only the Claude cleanup is on the critical path.
+    func format(text: String, focus: FocusContext?) async throws -> String {
+        guard let url = URL(string: "\(BackendClient.apiV1Base)/format") else {
+            throw BackendError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(FormatPayload(
+            text: text,
+            appBundleID: focus?.bundleIdentifier ?? "",
+            appName: focus?.applicationName ?? "",
+            windowTitle: focus?.windowTitle ?? ""
+        ))
+
+        return try await send(request)
+    }
+
+    /// Uploads the recording at `audioFileURL` to `POST /api/v1/dictate`
+    /// and returns the cleaned transcript.
+    ///
+    /// `focus` describes the app that had keyboard focus when recording
+    /// started; the backend uses it to choose a context-appropriate
+    /// cleanup prompt. Passing nil just falls back to generic cleanup.
+    func dictate(audioFileURL: URL, focus: FocusContext?) async throws -> String {
+        guard let url = URL(string: "\(BackendClient.apiV1Base)/dictate") else {
+            throw BackendError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        // Must exceed the backend's worst case (60s Whisper + 30s Claude)
+        // with margin, or the client gives up on a request that would
+        // have succeeded.
+        request.timeoutInterval = 120
+
+        let boundary = "Boundary-\(UUID().uuidString)"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try multipartBody(boundary: boundary, audioFileURL: audioFileURL, focus: focus)
+
+        return try await send(request)
+    }
+
+    /// Performs the request and unwraps `{"text": ...}` / `{"error": ...}`.
+    private func send(_ request: URLRequest) async throws -> String {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw BackendError.network(error)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw BackendError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            if let decodedError = try? JSONDecoder().decode(ErrorPayload.self, from: data) {
+                throw BackendError.server(decodedError.error)
+            }
+            throw BackendError.server("Backend returned status \(httpResponse.statusCode).")
+        }
+
+        return try JSONDecoder().decode(DictatePayload.self, from: data).text
+    }
+
+    private func multipartBody(boundary: String, audioFileURL: URL, focus: FocusContext?) throws -> Data {
+        let audioData = try Data(contentsOf: audioFileURL)
+
+        var body = Data()
+
+        if let focus {
+            appendTextField(&body, boundary: boundary,
+                            name: BackendClient.bundleIDField, value: focus.bundleIdentifier)
+            appendTextField(&body, boundary: boundary,
+                            name: BackendClient.appNameField, value: focus.applicationName)
+            appendTextField(&body, boundary: boundary,
+                            name: BackendClient.windowTitleField, value: focus.windowTitle)
+        }
+
+        body.append("--\(boundary)\r\n".utf8Data)
+        body.append(
+            "Content-Disposition: form-data; name=\"\(BackendClient.audioFormField)\"; filename=\"\(audioFileURL.lastPathComponent)\"\r\n"
+                .utf8Data
+        )
+        body.append("Content-Type: audio/mp4\r\n\r\n".utf8Data)
+        body.append(audioData)
+        body.append("\r\n--\(boundary)--\r\n".utf8Data)
+        return body
+    }
+
+    private func appendTextField(_ body: inout Data, boundary: String, name: String, value: String) {
+        guard !value.isEmpty else { return }
+        body.append("--\(boundary)\r\n".utf8Data)
+        body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".utf8Data)
+        body.append(value.utf8Data)
+        body.append("\r\n".utf8Data)
+    }
+}
+
+private struct DictatePayload: Decodable {
+    let text: String
+}
+
+/// Body of `POST /api/v1/format`. Keys match the Go `formatRequest` struct.
+private struct FormatPayload: Encodable {
+    let text: String
+    let appBundleID: String
+    let appName: String
+    let windowTitle: String
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case appBundleID = "app_bundle_id"
+        case appName = "app_name"
+        case windowTitle = "window_title"
+    }
+}
+
+private struct ErrorPayload: Decodable {
+    let error: String
+}
+
+private extension String {
+    var utf8Data: Data { Data(utf8) }
+}

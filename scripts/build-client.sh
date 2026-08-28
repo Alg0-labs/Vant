@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the Swift client and assembles it into a proper LocalFlow.app
+# Builds the Swift client and assembles it into a proper Vant.app
 # bundle (Contents/MacOS + Info.plist + entitlements), then ad-hoc
 # codesigns it. A real .app bundle — not the bare `swift build` binary — is
 # required for LSUIElement, the bundle identifier, and TCC (microphone /
@@ -15,8 +15,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLIENT_DIR="$REPO_ROOT/client/LocalFlow"
-APP_NAME="LocalFlow"
+CLIENT_DIR="$REPO_ROOT/client/Vant"
+APP_NAME="Vant"
 CONFIGURATION="release"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}" # "-" = ad-hoc
 
